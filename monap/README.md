@@ -1,0 +1,200 @@
+> **MonAllPg** : ce projet est le dossier `monap/` du dépôt fusionné [MonAllPg](../README.md). Les chemins cités ici (`sql/`, `scripts/`, `grafana/`, `Deploy/`) sont relatifs à `monap/`. Dans MonAllPg, Grafana est installée par `../grafana/install.sh` (provisioning par fichiers, source `ASEMON`) et non par `scripts/grafana-provision.sh` ; l'installation complète est dans [../docs/installation.md](../docs/installation.md).
+
+# monAp_pg
+
+Preuve de concept de **supervision de PostgreSQL**, inspirée d'ASEMON (supervision Sybase ASE) : une vue qui descend de l'instance entière jusqu'à la session, puis jusqu'à la requête SQL, avec ses coûts réels (CPU, disque) et son plan d'exécution.
+
+- Une VM **surveillée** (`VM-Cible`, PostgreSQL 17) envoie ses mesures à une VM **de supervision** (`VM-Monitoring`) qui les stocke dans un dépôt PostgreSQL et les affiche dans **Grafana**.
+- Aucune solution externe : PostgreSQL, Python, systemd et Grafana.
+
+> **Pour démarrer : [docs/00-guide-pas-a-pas.md](docs/00-guide-pas-a-pas.md)**, un guide unique qui va de la création des machines virtuelles sous Hyper-V jusqu'au contrôle des dashboards.
+
+> **Nom du projet** : anciennement « ASEMON-PG », renommé **monAp_pg** le 2026-10-15. Seuls les noms affichés ont changé. Les identifiants techniques gardent le préfixe `asemon` (schéma `asemon`, services `asemon-*`, dossier `/opt/asemon`, `uid` des dashboards `asemon-*`, source de données « ASEMON Monitoring ») pour ne rien casser sur les VM déjà installées. Le dépôt GitHub s'appelle `serentz/monAp_pg` ; un clone existant sous le dossier `asemon-pg` continue de fonctionner (`git remote set-url origin https://github.com/serentz/monAp_pg.git`).
+
+> Les adresses (`192.168.1.28`, `192.168.1.30`), l'utilisateur `admin01` et les chemins (`/opt/asemon`) sont ceux du POC : à adapter.
+
+## Ce que le POC permet
+
+| Question | Où |
+|---|---|
+| Comment va l'instance ? (sessions, connexions, cache, deadlocks, charge machine) | Dashboard **Macro** et résumé par heure |
+| Qui consomme ? (par login, par programme ; CPU réel, disque, attentes) | Dashboard **Intermédiaire** |
+| Quelles sont les sessions et les requêtes les plus coûteuses ? | Dashboard **Micro** (top 10, tri au choix) |
+| Que fait cette session ? Qui exécute cette requête ? Quel plan ? | Dashboards **Détail session** et **Détail requête** |
+| Que s'est-il passé pendant un incident ? (deadlocks, plans lents, sessions disparues) | Tables `event_*` et `snap_sessions`, rétention de 90 jours |
+
+## Architecture en une image
+
+```
+ VM-Cible (PostgreSQL 17 surveillé)              VM-Monitoring
+┌──────────────────────────────────┐          ┌─────────────────────────────┐
+│ collector   (15 s)  ─────────────┼─ INSERT ─▶ base « monitoring »         │
+│ sampler     (2 s)   ─────────────┼─ INSERT ─▶   schéma asemon              │
+│ log_parser  (logs)  ─────────────┼─ INSERT ─▶   (snap_*, event_*)          │
+│                                  │          │        ▲ lecture seule      │
+│ pg_stat_statements, auto_explain │          │        │                    │
+│ pg_stat_kcache                   │          │     Grafana :3000           │
+└──────────────────────────────────┘          │  timers : rollup, retention,│
+                                              │  maintenance des partitions │
+                                              └─────────────────────────────┘
+```
+
+Schémas détaillés (flux, tables, clés, navigation des dashboards) : **[docs/00-architecture.md](docs/00-architecture.md)**.
+
+## Aperçu
+
+| Macro | Intermédiaire | Micro |
+|---|---|---|
+| ![Macro](images/Release_3/01-macro.png) | ![Intermédiaire](images/Release_3/02-intermediaire-repartition.png) | ![Micro](images/Release_3/05-micro-top10.png) |
+
+Toutes les captures (version 3, dont Capacity planning) : [images/Release_3](images/Release_3/README.md).
+
+## État d'avancement
+
+| Phase | Contenu | État |
+|---|---|---|
+| 0 | Collecte toutes les 15 s, dashboard d'origine | Fait |
+| 1 | Sessions exactes (connexion, déconnexion) via les logs ; `session_key` partout ; rollup horaire | Fait, validé |
+| 2 | Échantillonnage des sessions actives toutes les 2 s ; rétention des données | Fait, validé |
+| 3 | CPU et disque réels par requête (`pg_stat_kcache`) | Fait, validé (I/O réseau non mesurable) |
+| 4 | Dashboards Grafana : macro, intermédiaire, micro, détails session et requête | Fait, validé |
+| Release 3 | Capacity planning : collecte des tailles (3a), dashboard et extrapolations (3b) | Fait, validé |
+| Release 4 | Multi-instance : schéma et agents (4a), dashboards par instance (4b), seuils (4c), niveau zéro et page instance (4d) | **terminée** : 4a à 4d validées ([docs/19](docs/19-multi-instance.md), [docs/20](docs/20-supervision-vm-monitoring.md), [docs/21](docs/21-seuils.md), [docs/22](docs/22-parc-et-instance.md)) |
+
+| v2.1 | Plans d'exécution lisibles et mieux capturés | codée, à valider sur les VM ([docs/17](docs/17-plans-v2.1.md)) |
+| v2.2 | Déploiement par archives : instance cible, instance monitoring, Grafana | **écrite**, à valider sur VM neuves ([docs/24](docs/24-paquets-deploiement.md)) |
+
+**En cours** : validation de la v2.1 et de la v2.2 sur des VM neuves (création des VM avec `create_vms.ps1`, puis installation par archives).
+
+**Prochaine release** : Release 5 (réplication). Voir [docs/16-roadmap-releases.md](docs/16-roadmap-releases.md).
+
+Suites possibles : alertes Grafana, mesure du volume réel après plusieurs jours, ajustement des durées de rétention. Réflexion et historique des choix : [docs/06-roadmap-ihm.md](docs/06-roadmap-ihm.md).
+
+## Contenu du dépôt
+
+| Dossier | Contenu |
+|---|---|
+| `python/` | `collector.py` (snapshots toutes les 15 s, dont `pg_stat_kcache`), `sampler.py` (sessions actives toutes les 2 s), `log_parser.py` (connexions, deadlocks, plans), `plan_format.py` (SQL et plans lisibles), `backfill_plans.py`, `retention.py` (rétention, VM-Monitoring), `config.py.example` |
+| `sql/` | Schéma du dépôt, rôles et droits, fonctions (rollup, purge, partitions, répartition `kcache_attr`). Numérotés dans l'ordre d'application |
+| `systemd/` | Services (`collector`, `sampler`, `logparser`) et timers (`rollup`, `retention`, `samples-maintenance`) |
+| `grafana/` | 10 dashboards en JSON, importables (parc, instance, macro, intermédiaire, micro, session, requête, capacity, seuils, dashboard d'origine) et `plugins.txt` (plugins Grafana requis) |
+| `Deploy/` | **Les 3 archives de déploiement** (`monAp_pg_instance_cible.tgz`, `monAp_pg_instance_monitoring.tgz`, `monAp_pg_grafana.tgz`) et leurs empreintes |
+| `packaging/` | `build_packages.sh` : construit les archives de `Deploy/` ; `test_packages.sh` ; modèles des LISEZMOI (voir `docs/24-paquets-deploiement.md`) |
+| `infra/hyperv/` | `create_vms.ps1` : commutateur et 2 VM Hyper-V avec Ubuntu installé automatiquement (voir `docs/23-creation-vm-hyperv.md`) |
+| `scripts/` | Installation scriptée (`install-monitoring.sh`, `install-target.sh`, `install-grafana.sh`, `grafana-provision.sh`, `verify.sh`) ; `charge-lente.sh` (requêtes lentes pour tester les plans) |
+| `docs/` | Fiches d'installation et de fonctionnement, une par étape |
+| `images/` | Captures et références visuelles |
+
+`python/config.py` contient des mots de passe : il n'est **jamais** versionné (`.gitignore`). Partir de `config.py.example`.
+
+## Le dossier Deploy : archives de déploiement
+
+`Deploy/` contient **les fichiers à copier sur les machines**, prêts à l'emploi : une archive par fonction. On n'a plus besoin de cloner le dépôt sur les VM.
+
+| Archive | À installer sur | Rôle | Ordre |
+|---|---|---|---|
+| `monAp_pg_instance_monitoring.tgz` | VM-Monitoring | repository PostgreSQL (base `monitoring`), scripts SQL, rôles, timers (rollup, partitions, rétention) | 1 |
+| `monAp_pg_grafana.tgz` | VM-Monitoring ou une autre machine | Grafana, plugins, source de données, 10 dashboards | 2 |
+| `monAp_pg_instance_cible.tgz` | chaque VM PostgreSQL à surveiller | collecteur (15 s), échantillonneur (2 s), parseur de journaux, rôle de collecte, services systemd | 3 |
+
+Chaque archive contient, à l'intérieur de son dossier :
+
+- `LISEZMOI.md` : composants à installer, SQL à exécuter, commandes de planification (systemd, et cron pour VM-Monitoring), vérification, mise à jour, désinstallation, dépannage ;
+- `install.sh` et `verify.sh` : installation (rejouable) et contrôles ;
+- `manifeste.txt` (les deux archives Python) : paquets du venv, `pip install -r manifeste.txt` ;
+- `scripts/asemon.env.example` : paramètres à copier en `asemon.env` (IP, mots de passe) ;
+- `SHA256SUMS` et `VERSION` : contrôle d'intégrité, version.
+
+`Deploy/SHA256SUMS` donne les empreintes des trois archives.
+
+**Utilisation, sur chaque machine** (VM-Monitoring d'abord, puis Grafana, puis les cibles) :
+
+```powershell
+# depuis Windows, après git pull
+scp Deploy\monAp_pg_instance_monitoring.tgz admin01@<ip VM-Monitoring>:~/
+```
+
+```bash
+tar xzf monAp_pg_instance_monitoring.tgz && cd monAp_pg_instance_monitoring
+sha256sum -c SHA256SUMS --quiet                    # contrôle d'intégrité
+cp scripts/asemon.env.example scripts/asemon.env && nano scripts/asemon.env
+sudo ./install.sh
+sudo ./verify.sh
+```
+
+Les mots de passe `COLLECTOR_PASSWORD` et `GRAFANA_RO_PASSWORD` doivent être **identiques** dans les archives qui les partagent. Plusieurs machines à surveiller : la même archive cible partout, avec un `INSTANCE_NAME` différent dans chaque `asemon.env`.
+
+**Régénérer les archives** (après une modification du code, des scripts ou des dashboards) : `packaging/build_packages.sh v2.2`, puis commiter `Deploy/`. Les fichiers de `Deploy/` sont générés : ne pas les modifier à la main. Détails, tests et changements apportés aux scripts : [docs/24-paquets-deploiement.md](docs/24-paquets-deploiement.md).
+
+> Statut : écrit le 2026-10-18, **à valider sur des VM neuves**.
+
+## Installation : l'ordre à suivre
+
+| Étape | Où | Document |
+|---|---|---|
+| 0. (Option) Créer les deux VM d'un coup, Ubuntu installé automatiquement | Windows (Hyper-V) | [23-creation-vm-hyperv](docs/23-creation-vm-hyperv.md) |
+| 1. Créer VM-Monitoring, PostgreSQL 17, Grafana | VM-Monitoring | [01-VM-Monitoring](docs/01-VM-Monitoring.md), [01-…-repository-grafana](docs/01-VM-Monitoring-repository-grafana.md) |
+| 2. Créer VM-Cible, PostgreSQL 17, extensions, logs JSON | VM-Cible | [02-VM-Cible](docs/02-VM-Cible.md) |
+| 3. Collecteur Python | VM-Cible | [02-VM-Cible-collecteur-python](docs/02-VM-Cible-collecteur-python.md) |
+| 4. Parseur de logs, déploiement dans `/opt/asemon`, services systemd | VM-Cible | [03-VM-Cible-parseur-systemd](docs/03-VM-Cible-parseur-systemd.md) |
+| 5. Métriques étendues (tables, index, WAL, checkpoints…) | les deux | [04-metriques-etendues](docs/04-metriques-etendues.md) |
+| 6. Dashboard d'origine | Grafana | [05-dashboard-grafana](docs/05-dashboard-grafana.md) |
+| 7. Sessions exactes (`log_connections`, `lc_messages = 'C'`) | les deux | [07-sessions-phase1](docs/07-sessions-phase1.md) |
+| 8. Rollup horaire | VM-Monitoring | [08-rollup-horaire](docs/08-rollup-horaire.md) |
+| 9. Échantillonnage 2 s | les deux | [09-echantillonnage-phase2](docs/09-echantillonnage-phase2.md) |
+| 10. Rétention | VM-Monitoring | [10-retention](docs/10-retention.md) |
+| 11. `pg_stat_kcache` : extension, schéma, collecte | les deux | [14-kcache-phase3](docs/14-kcache-phase3.md) |
+| 12. Plans lisibles (v2.1) : `sql/12`, plugin Grafana, rattrapage | les deux | [17-plans-v2.1](docs/17-plans-v2.1.md) |
+| 13. Dashboards macro, intermédiaire, micro | Grafana | [11](docs/11-dashboard-macro.md), [12](docs/12-dashboard-intermediaire.md), [13](docs/13-dashboard-micro.md) |
+| Tout en un | les deux | [15-installation-scriptee](docs/15-installation-scriptee.md) |
+| Ou : une archive par fonction, sans cloner le dépôt | chaque machine | [24-paquets-deploiement](docs/24-paquets-deploiement.md) |
+
+**Déploiement par archives (v2.2)** : voir la section [Le dossier Deploy](#le-dossier-deploy-archives-de-déploiement) ci-dessous.
+
+**Chemin court : installation scriptée** (VM déjà créées, Ubuntu installé) : deux scripts enchaînent toutes les étapes ci-dessus, voir [docs/15-installation-scriptee.md](docs/15-installation-scriptee.md).
+
+```bash
+cp scripts/asemon.env.example scripts/asemon.env && nano scripts/asemon.env   # IP, mots de passe
+sudo ./scripts/install-monitoring.sh      # d'abord, sur VM-Monitoring
+sudo ./scripts/install-target.sh          # ensuite, sur VM-Cible
+sudo ./scripts/verify.sh monitoring|target
+```
+
+Ordre des scripts SQL (VM-Monitoring) : `01, 02, 04, 05, 06, 08, 09, 10, 11, 12, 13, 14, 15, 16, 17` (`14` puis `15` : voir [docs/19](docs/19-multi-instance.md) pour une mise à jour) ; `03` sur VM-Cible ; `07` est un brouillon, **ne pas l'appliquer**. Les scripts sont rejouables. Toujours VM-Monitoring avant VM-Cible : le schéma doit exister avant que le collecteur écrive dedans.
+
+## Réglages courants
+
+| Je veux… | Où | Document |
+|---|---|---|
+| Changer l'intervalle de collecte (15 s) ou d'échantillonnage (2 s) | `/opt/asemon/app/config.py` (`INTERVAL`, `SAMPLE_INTERVAL`) puis `systemctl restart` | `09`, `14` |
+| Changer la durée de conservation | `asemon.settings` (VM-Monitoring) : `sample_retention_days` 14, `snapshot_retention_days` 30, `event_retention_days` 90, `session_retention_days` 90 | `10`, `09` |
+| Forcer la rétention ou un rollup | `sudo -u postgres /opt/asemon/venv/bin/python3 /opt/asemon/app/retention.py` (`--dry-run` pour simuler) / `SELECT asemon.rollup_hourly();` | `18`, `10`, `08` |
+| Changer la durée de l'historique de taille (capacity planning) | `asemon.settings` : `capacity_full_days` 7, `capacity_max_days` 1095 | `18` |
+| Voir la taille des échantillons | `SELECT * FROM asemon.v_samples_partitions;` | `09` |
+| Désactiver `pg_stat_kcache` | retirer l'extension de `shared_preload_libraries` (procédure et piège dans le doc) | `14` §2 |
+
+## Pièges déjà rencontrés
+
+- **`lc_messages = 'C'` obligatoire** sur VM-Cible : en français, les connexions et deadlocks ne sont plus reconnus, sans aucune erreur (`07`, `03`).
+- **`ALTER SYSTEM SET shared_preload_libraries`** avec plusieurs extensions : écrire `'a', 'b', 'c'` (chaque nom entre apostrophes, séparés par des virgules). Écrire `'a,b,c'` enregistre un seul nom et **le serveur ne démarre plus** (`14` §2.2).
+- **`query_id`** dépasse la précision des nombres JavaScript : toujours le traiter comme du texte dans Grafana (`13`).
+- **Lectures disque à 0** avec `pg_stat_kcache` : normal quand les données tiennent dans le cache du système (`14`).
+- **« Part non attribuée »** dans les camemberts par programme : requêtes plus courtes que l'intervalle d'échantillonnage. Le total reste exact (`00-architecture`, §4).
+- **Volume** : compter environ 6,5 Go sur VM-Monitoring pour 30 jours de rétention, dont l'essentiel pour `snap_statements` (100 requêtes écrites à chaque cycle). Réduire `snapshot_retention_days` si le disque est limité (`10-retention.md`).
+- **Journal tronqué** (`journal ... is truncated, ignoring file`) : message inoffensif, filtrer avec `grep -v truncated`.
+
+## Vocabulaire
+
+| Terme | Sens |
+|---|---|
+| Snapshot | Photo périodique (15 s) de vues statistiques ; table `snap_*` |
+| Échantillon | Relevé des sessions actives toutes les 2 s ; table `snap_samples` |
+| `session_key` | `session_id` natif de PostgreSQL : même valeur dans les logs et dans `pg_stat_activity` |
+| `query_id` | Identifiant d'une requête normalisée (le même dans toutes les sources) |
+| Temps actif | Durée pendant laquelle une session exécutait quelque chose, d'après les échantillons |
+| CPU mesuré | CPU réellement consommé (`pg_stat_kcache`), exact par requête et par login |
+| Non attribué | Coût mesuré qu'aucun échantillon ne permet de rattacher à une session |
+
+## Licence
+
+Projet publié sous licence [MIT](LICENSE). Vous pouvez l'utiliser, le modifier et le redistribuer librement, à condition de conserver la mention de copyright. Aucun code ni document propriétaire d'ASEMON (Sybase) n'est repris : le projet s'en inspire seulement pour l'idée.

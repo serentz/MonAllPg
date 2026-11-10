@@ -1,0 +1,43 @@
+# ============================================================
+# monAp_pg — Configuration du collecteur
+# Copier ce fichier en config.py et adapter les valeurs.
+# config.py ne doit PAS être versionné dans Git (contient des mots de passe) :
+# ajouter "config.py" au .gitignore du dépôt.
+# ============================================================
+
+# Instance surveillée (locale à VM-Cible)
+TARGET_DSN = "host=localhost dbname=postgres user=asemon_collect password=CHANGEME_asemon_collect"
+
+# Repository (VM-Monitoring) — adapter l'IP à votre environnement
+REPO_DSN = "host=192.168.1.28 dbname=monitoring user=collector_writer password=CHANGEME_collector"
+
+# Intervalle de collecte, en secondes
+INTERVAL = 15
+
+# Échantillonneur de sessions actives (sampler.py, Phase 2) : secondes entre
+# deux relevés. Optionnel (2 par défaut), borné à 0.5 - 60. Après modification :
+#   sudo systemctl restart asemon-sampler
+# Voir docs/09-echantillonnage-phase2.md (volume attendu selon la valeur).
+SAMPLE_INTERVAL = 2
+
+# Répertoire de données PostgreSQL local (utilisé par log_parser.py pour
+# retrouver le fichier de log actif via current_logfiles)
+PG_DATA_DIR = "/var/lib/postgresql/17/main"
+
+# Plans d'exécution (log_parser.py, v2.1) : nombre maximal de plans conservés par
+# requête et par heure. Optionnel (5 par défaut ; 0 = illimité). Après modification :
+#   sudo systemctl restart asemon-logparser
+PLAN_MAX_PER_QUERY_HOUR = 5
+
+# Release 4a : nom de cette instance supervisée, affiché dans les dashboards et unique dans le
+# repository. Une machine = un nom : "VM-Cible" sur la VM-Cible, "VM-Monitoring" sur VM-Monitoring.
+# L'agent s'enregistre dans asemon.instances au premier démarrage (aucune autre action).
+INSTANCE_NAME = "VM-Cible"
+
+# Adresse affichée pour cette instance (facultatif ; sinon l'hôte de TARGET_DSN)
+# INSTANCE_HOST = "192.168.1.30"
+
+# Release 4b : logins que l'échantillonneur ignore (bruit). Utile sur VM-Monitoring, qui se supervise
+# elle-même : ses agents (collector_writer) et Grafana (grafana_ro) ne doivent pas être échantillonnés.
+# Optionnel (liste vide par défaut). Après modification : sudo systemctl restart asemon-sampler
+# SAMPLE_EXCLUDE_USERS = ["collector_writer", "grafana_ro"]

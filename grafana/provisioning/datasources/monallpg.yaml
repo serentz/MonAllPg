@@ -1,0 +1,55 @@
+apiVersion: 1
+# Trois sources de données, toutes en lecture (sauf le formulaire des seuils de monAp_pg).
+# Les mots de passe sont lus dans l'environnement du service grafana-server (/etc/default/grafana-server) : jamais dans Git.
+datasources:
+  # Page d'accueil : la météo des instances (base « meteo », schéma meteo).
+  - name: meteo
+    uid: meteo-pg
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: pg01:5432
+    user: grafana_ro
+    isDefault: true
+    editable: false
+    jsonData:
+      database: meteo
+      sslmode: disable
+      postgresVersion: 1600
+      maxOpenConns: 5
+    secureJsonData:
+      password: $__env{METEO_GRAFANA_PWD}
+
+  # Pages monAp_pg : le nom « ASEMON » est celui que filtre la variable DS_MONITORING des tableaux de bord.
+  - name: ASEMON
+    uid: asemon-monitoring
+    type: postgres
+    access: proxy
+    url: pg01:5432
+    user: grafana_ro
+    isDefault: false
+    editable: false
+    jsonData:
+      database: monitoring
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: false
+      maxOpenConns: 5
+    secureJsonData:
+      password: $__env{ASEMON_GRAFANA_RO_PWD}
+
+  # Formulaire de la page Seuils : rôle qui ne peut qu'appeler set_threshold() / reset_threshold().
+  - name: ASEMON Seuils
+    uid: asemon-seuils
+    type: postgres
+    access: proxy
+    url: pg01:5432
+    user: grafana_thresholds
+    isDefault: false
+    editable: false
+    jsonData:
+      database: monitoring
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: false
+    secureJsonData:
+      password: $__env{ASEMON_GRAFANA_THRESHOLDS_PWD}
